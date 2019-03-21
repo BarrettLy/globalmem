@@ -18,6 +18,7 @@ module_param(globalmem_major, int, S_IRUGO);
 struct globalmem_dev{
 	struct cdev cdev;
 	unsigned char mem[GLOBALMEM_SIZE];
+	struct mutex mutex;//工程师习惯将某设备所使用的自旋锁，互斥体等手段放在设备结构体中
 };
 
 struct globalmem_dev *globalmem_devp;
@@ -52,6 +53,7 @@ static ssize_t globalmem_read(struct file *filp, char __user *buf, size_t size, 
 	if(count > GLOBALMEM_SIZE - p)
 		count = GLOBALMEM_SIZE -p;
 
+	mutex_lock(&dev->mutex);//在使用结构体中共享资源时要锁住临界区
 	if(copy_to_user(buf, dev->mem + p, count))
 		ret = -EFAULT;
 	else{
@@ -59,6 +61,7 @@ static ssize_t globalmem_read(struct file *filp, char __user *buf, size_t size, 
 		ret = count;
 		printk(KERN_INFO "read %u bytes(s) from %lu\n", count, p);
 	}
+	mutex_unlock(&dev->mutex);//离开需要释放互斥体
 	return ret;
 }
 
@@ -73,6 +76,7 @@ static ssize_t globalmem_write(struct file *filp, const char __user *buf, size_t
 	if(count > GLOBALMEM_SIZE - p)
 		count = GLOBALMEM_SIZE - p;
 
+	mutex_lock(&dev->mutex);//在使用结构体中共享资源时要锁住临界区
 	if(copy_from_user(dev->mem + p, buf, count))
 		ret = -EFAULT;
 	else{
@@ -80,6 +84,7 @@ static ssize_t globalmem_write(struct file *filp, const char __user *buf, size_t
 		ret = count;
 		printk(KERN_INFO "written %u bytes(s) from %lu\n", count, p);
 	}
+	mutex_unlock(&dev->mutex);//离开的时候需要释放互斥体
 	return ret;
 }
 
@@ -123,8 +128,10 @@ static long globalmem_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 	struct globalmem_dev *dev = filp->private_data;
 	switch(cmd){
 	case MEM_CLEAR:
+		mutex_lock(&dev->mutex);//在使用结构体中的临界资源的时候需要用互斥提锁住
 		memset(dev->mem, 0, GLOBALMEM_SIZE);
 		printk(KERN_INFO "globalmem is set to zero\n");
+		mutex_unlock(&dev->mutex);//离开的时候需要释放互斥提
 		break;
 	default:
 		return -EINVAL;
@@ -172,6 +179,8 @@ static int __init globalmem_init(void)
 		ret = -ENOMEM;
 		goto fail_malloc;
 	}
+
+	mutex_init(&globalmem_devp->mutex);//初始化互斥体
 	globalmem_setup_cdev(globalmem_devp, 0);
 	return 0;
 
